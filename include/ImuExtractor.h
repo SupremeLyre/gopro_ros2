@@ -61,10 +61,12 @@ public:
                       bool offset_only = false);
 
   void writeImuData(rosbag::Bag& bag, uint64_t end_time, const std::string& imu_topic);
+  void writeGpsData(rosbag::Bag& bag, uint64_t end_time, const std::string& gps_topic);
   void readImuData(std::deque<AcclMeasurement>& accl_data,
                    std::deque<GyroMeasurement>& gyro_data,
                    uint64_t accl_end_time = 0,
                    uint64_t gyro_end_time = 0);
+  bool isSensorPresent(uint32_t fourcc);
   uint64_t getPayloadStartStamp(uint32_t fourcc, uint32_t index);
   void readImuData(std::vector<uint64_t>& image_stamps,
                    std::deque<GyroMeasurement>& gyro_data,

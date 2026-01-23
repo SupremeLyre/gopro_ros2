@@ -23,6 +23,8 @@
 
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
+#include <sensor_msgs/NavSatFix.h>
+#include <sensor_msgs/NavSatStatus.h>
 #include <std_msgs/Header.h>
 
 #include <cstdlib>
@@ -819,4 +821,134 @@ void GoProImuExtractor::readMagnetometerData(std::deque<MagMeasurement>& mag_que
       mag_queue.push_back(MagMeasurement(mag_stamp, magnetic_field));
     }
   }
+}
+
+void GoProImuExtractor::writeGpsData(rosbag::Bag& bag,
+                                     uint64_t end_time,
+                                     const std::string& gps_topic) {
+  uint64_t first_frame_us, first_frame_ns;
+  vector<vector<double>> gps_data;
+
+  uint64_t current_stamp, prev_stamp;
+
+  vector<uint64_t> steps;
+  uint64_t total_samples = 0;
+  uint64_t seq = 0;
+
+  for (uint32_t index = 0; index < payloads; index++) {
+    GPMF_ERR ret;
+    uint32_t payload_size;
+
+    payload_size = GetPayloadSize(mp4, index);
+    payloadres = GetPayloadResource(mp4, payloadres, payload_size);
+    payload = GetPayload(mp4, payloadres, index);
+
+    if (payload == NULL) cleanup();
+    ret = GPMF_Init(ms, payload, payload_size);
+    if (ret != GPMF_OK) cleanup();
+
+    if (index == 0) {
+      first_frame_us = get_stamp(STR2FOURCC("CORI"));
+      first_frame_ns = first_frame_us * 1000;
+    }
+
+    current_stamp = get_stamp(STR2FOURCC("GPS9"));
+
+    current_stamp = current_stamp * 1000;  // us to ns
+    if (index > 0) {
+      uint64_t time_span = current_stamp - prev_stamp;
+      if (time_span < 0) {
+        cout << RED << "previous timestamp should be smaller than current stamp" << RESET << endl;
+        exit(1);
+      }
+
+      uint64_t step_size = 0;
+      if (gps_data.size() > 0) {
+        step_size = time_span / gps_data.size();
+      }
+      steps.emplace_back(step_size);
+
+      for (int i = 0; i < gps_data.size(); ++i) {
+        uint64_t s = prev_stamp + i * step_size;
+        uint64_t current_ros_stamp = movie_creation_time + s - first_frame_ns;
+
+        uint32_t secs = current_ros_stamp * 1e-9;
+        uint32_t n_secs = current_ros_stamp % 1000000000;
+        ros::Time ros_time(secs, n_secs);
+
+        std_msgs::Header header;
+        header.stamp = ros_time;
+        header.frame_id = "gopro";
+        header.seq = seq++;
+
+        vector<double> gps_sample = gps_data.at(i);
+        // GPS9 format:
+        // 0: lat, 1: long, 2: alt, 3: 2D speed, 4: 3D speed, 
+        // 5: days, 6: secs, 7: DOP, 8: fix
+
+        sensor_msgs::NavSatFix gps_msg;
+        gps_msg.header = header;
+        gps_msg.latitude = gps_sample.at(0);
+        gps_msg.longitude = gps_sample.at(1);
+        gps_msg.altitude = gps_sample.at(2);
+
+        // Map fix to status
+        int fix_type = (int)gps_sample.at(8);
+        if (fix_type == 0) {
+             gps_msg.status.status = sensor_msgs::NavSatStatus::STATUS_NO_FIX;
+        } else if (fix_type == 2 || fix_type == 3) {
+             gps_msg.status.status = sensor_msgs::NavSatStatus::STATUS_FIX;
+        } else {
+             gps_msg.status.status = sensor_msgs::NavSatStatus::STATUS_NO_FIX; 
+        }
+        gps_msg.status.service = sensor_msgs::NavSatStatus::SERVICE_GPS;
+        
+        gps_msg.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+
+        bag.write(gps_topic, ros_time, gps_msg);  // Write to bag
+
+        if ((current_ros_stamp - movie_creation_time) > end_time) break;
+      }
+    }
+
+    gps_data.clear();
+    get_scaled_data(STR2FOURCC("GPS9"), gps_data);
+
+    total_samples += gps_data.size();
+    prev_stamp = current_stamp;
+
+    GPMF_Free(ms);
+  }
+
+  std::cout << GREEN << "Wrote " << total_samples << " gps samples to file" << RESET << endl;
+}
+
+bool GoProImuExtractor::isSensorPresent(uint32_t fourcc) {
+  uint32_t payload_size = GetPayloadSize(mp4, 0);
+  size_t pres = 0; // Assuming 0 is invalid/initial handle
+  pres = GetPayloadResource(mp4, pres, payload_size);
+  uint32_t* p = GetPayload(mp4, pres, 0); // index 0
+  
+  if (!p) {
+    if (pres) FreePayloadResource(mp4, pres);
+    return false;
+  }
+
+  GPMF_stream stream;
+  if (GPMF_Init(&stream, p, payload_size) != GPMF_OK) {
+      if (pres) FreePayloadResource(mp4, pres);
+      return false;
+  }
+
+  bool found = false;
+  while (GPMF_FindNext(&stream, STR2FOURCC("STRM"), static_cast<GPMF_LEVELS>(GPMF_RECURSE_LEVELS | GPMF_TOLERANT)) ==
+         GPMF_OK) {
+    if (GPMF_FindNext(&stream, fourcc, static_cast<GPMF_LEVELS>(GPMF_RECURSE_LEVELS | GPMF_TOLERANT)) == GPMF_OK) {
+      found = true;
+      break;
+    }
+  }
+  
+  if (pres) FreePayloadResource(mp4, pres);
+  return found;
 }

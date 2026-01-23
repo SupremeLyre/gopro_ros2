@@ -81,6 +81,7 @@ int main(int argc, char* argv[]) {
   vector<uint64_t> image_stamps;
 
   bool has_magnetic_field_readings = false;
+  bool has_gps_readings = false;
   for (uint32_t i = 0; i < video_files.size(); i++) {
     image_stamps.clear();
 
@@ -90,10 +91,13 @@ int main(int argc, char* argv[]) {
     GoProImuExtractor imu_extractor(file.string());
     GoProVideoExtractor video_extractor(file.string(), scaling, true);
 
-    if (i == 0 && imu_extractor.getNumofSamples(STR2FOURCC("MAGN"))) {
+    if (i == 0 && imu_extractor.isSensorPresent(STR2FOURCC("MAGN"))) {
       has_magnetic_field_readings = true;
     }
-
+    if (i == 0 && imu_extractor.isSensorPresent(STR2FOURCC("GPS9"))) {
+      has_gps_readings = true;
+    }
+    
     imu_extractor.getPayloadStamps(STR2FOURCC("ACCL"), start_stamps, samples);
     ROS_INFO_STREAM("[ACCL] Payloads: " << start_stamps.size()
                                         << " Start stamp: " << start_stamps[0]
@@ -117,9 +121,18 @@ int main(int argc, char* argv[]) {
                                           << " Total Samples: " << samples.at(samples.size() - 1));
     }
 
+    if (has_gps_readings) {
+      imu_extractor.getPayloadStamps(STR2FOURCC("GPS9"), start_stamps, samples);
+      ROS_INFO_STREAM("[GPS9] Payloads: " << start_stamps.size()
+                                          << " Start stamp: " << start_stamps[0]
+                                          << " End stamp: " << start_stamps[samples.size() - 1]
+                                          << " Total Samples: " << samples.at(samples.size() - 1));
+    }
+
     uint64_t accl_end_stamp = 0, gyro_end_stamp = 0;
     uint64_t video_end_stamp = 0;
     uint64_t magnetometer_end_stamp = 0;
+    uint64_t gps_end_stamp = 0;
 
     if (i < video_files.size() - 1) {
       GoProImuExtractor imu_extractor_next(video_files[i + 1].string());
@@ -129,10 +142,17 @@ int main(int argc, char* argv[]) {
       if (has_magnetic_field_readings) {
         magnetometer_end_stamp = imu_extractor_next.getPayloadStartStamp(STR2FOURCC("MAGN"), 0);
       }
+      if (has_gps_readings) {
+        gps_end_stamp = imu_extractor_next.getPayloadStartStamp(STR2FOURCC("GPS9"), 0);
+      }
     }
 
     imu_extractor.readImuData(accl_queue, gyro_queue, accl_end_stamp, gyro_end_stamp);
     imu_extractor.readMagnetometerData(magnetometer_queue, magnetometer_end_stamp);
+
+    if (has_gps_readings) {
+      imu_extractor.writeGpsData(bag, gps_end_stamp, "/gopro/gps");
+    }
 
     uint32_t gpmf_frame_count = imu_extractor.getImageCount();
     uint32_t ffmpeg_frame_count = video_extractor.getFrameCount();
