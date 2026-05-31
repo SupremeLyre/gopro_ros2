@@ -1,88 +1,106 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import glob
 import os
 
-import rosbag
-import rospy
-from sensor_msgs.msg import Image, CompressedImage, Imu
-from cv_bridge import CvBridge
-from std_msgs.msg import Header
-from geometry_msgs.msg import Vector3
+from builtin_interfaces.msg import Time
 import cv2
-import glob
+from cv_bridge import CvBridge
+from rclpy.serialization import serialize_message
+import rosbag2_py
+from sensor_msgs.msg import Image, Imu
 from tqdm import tqdm
 
-if __name__ == "__main__":
-    base_dir = "/home/bjoshi/GoPro9/vio_test/mav0"
-    bag_name = "/home/bjoshi/GoPro9/gopro9_vio.bag"
-    topic = "cam0/image_raw"
 
-    use_stereo = False
-    use_imu = True
+def ns_to_time(stamp_ns):
+    stamp_ns = int(stamp_ns)
+    stamp = Time()
+    stamp.sec = int(stamp_ns // 1000000000)
+    stamp.nanosec = stamp_ns % 1000000000
+    return stamp
 
+
+def create_writer(bag_uri):
+    writer = rosbag2_py.SequentialWriter()
+    writer.open(
+        rosbag2_py.StorageOptions(uri=bag_uri, storage_id="sqlite3"),
+        rosbag2_py.ConverterOptions("cdr", "cdr"),
+    )
+    return writer
+
+
+def create_topic(writer, name, msg_type):
+    writer.create_topic(rosbag2_py.TopicMetadata(0, name, msg_type, "cdr"))
+
+
+def write_images(writer, base_dir, topic, grayscale):
+    bridge = CvBridge()
     cam0_folder = os.path.join(base_dir, "cam0", "data")
-    indx = 0
-    files = glob.glob(cam0_folder+"/*")
-    files = sorted(files)
+    files = sorted(glob.glob(os.path.join(cam0_folder, "*")))
 
-    outbag = rosbag.Bag(bag_name, 'w')
+    create_topic(writer, topic, "sensor_msgs/msg/Image")
 
-    for file in tqdm(files):
-        stamp = os.path.split(file)[1].split('.')[0]
-        secs = int(float(stamp) * 1e-9)
-        n_secs = int(float(stamp) - secs*1e9)
-        ros_time = rospy.Time(secs, n_secs)
+    for file_path in tqdm(files, desc="images"):
+        stamp_ns = int(os.path.splitext(os.path.basename(file_path))[0])
+        image = cv2.imread(file_path, cv2.IMREAD_COLOR)
+        if image is None:
+            continue
 
-        header = Header()
-        header.stamp = ros_time
-        header.frame_id = '/gopro'
-        header.seq = indx
+        encoding = "bgr8"
+        if grayscale:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            encoding = "mono8"
 
-        image = cv2.imread(file)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        bridge = CvBridge()
-        msg = bridge.cv2_to_imgmsg(image, encoding="passthrough")
-        msg.header = header
-        msg.encoding = 'mono8'
-        outbag.write('/cam0/image_raw', msg, header.stamp)
-        indx += 1
+        msg = bridge.cv2_to_imgmsg(image, encoding=encoding)
+        msg.header.stamp = ns_to_time(stamp_ns)
+        msg.header.frame_id = "gopro"
+        writer.write(topic, serialize_message(msg), stamp_ns)
 
-    if use_imu:
-        imu_file = open(os.path.join(base_dir, "imu0", "data.csv"))
-        indx = 0
-        # skip the first line asl format
-        imu_file.readline()
-        lines = imu_file.readlines()
-        for line in lines:
-            line = line.strip()
-            line_arr = line.split(',')
-            stamp = line_arr[0]
-            secs = int(float(stamp) * 1e-9)
-            n_secs = int(float(stamp) - secs*1e9)
-            ros_time = rospy.Time(secs, n_secs)
 
-            header = Header()
-            header.stamp = ros_time
-            header.frame_id = '/gopro'
-            header.seq = indx
+def write_imu(writer, base_dir, topic):
+    imu_path = os.path.join(base_dir, "imu0", "data.csv")
+    if not os.path.exists(imu_path):
+        return
 
-            angular_vel = Vector3()
-            angular_vel.x = float(line_arr[1])
-            angular_vel.y = float(line_arr[2])
-            angular_vel.z = float(line_arr[3])
+    create_topic(writer, topic, "sensor_msgs/msg/Imu")
 
-            linear_acc = Vector3()
-            linear_acc.x = float(line_arr[4])
-            linear_acc.y = float(line_arr[5])
-            linear_acc.z = float(line_arr[6])
+    with open(imu_path, newline="") as imu_file:
+        reader = csv.reader(row for row in imu_file if not row.startswith("#"))
+        for row in tqdm(reader, desc="imu"):
+            if len(row) < 7:
+                continue
 
+            stamp_ns = int(row[0])
             imu = Imu()
-            imu.header = header
-            imu.angular_velocity = angular_vel
-            imu.linear_acceleration = linear_acc
+            imu.header.stamp = ns_to_time(stamp_ns)
+            imu.header.frame_id = "gopro"
+            imu.angular_velocity.x = float(row[1])
+            imu.angular_velocity.y = float(row[2])
+            imu.angular_velocity.z = float(row[3])
+            imu.linear_acceleration.x = float(row[4])
+            imu.linear_acceleration.y = float(row[5])
+            imu.linear_acceleration.z = float(row[6])
+            writer.write(topic, serialize_message(imu), stamp_ns)
 
-            outbag.write('/imu0', imu, header.stamp)
 
-    outbag.close()
+def main():
+    parser = argparse.ArgumentParser(description="Convert Euroc/ASL files to a ROS2 bag.")
+    parser.add_argument("--base_dir", required=True, help="Input mav0 directory.")
+    parser.add_argument("--bag", required=True, help="Output ROS2 bag directory.")
+    parser.add_argument("--image_topic", default="/cam0/image_raw")
+    parser.add_argument("--imu_topic", default="/imu0")
+    parser.add_argument("--no_imu", action="store_true", help="Skip imu0/data.csv.")
+    parser.add_argument("--grayscale", action="store_true", help="Write images as mono8.")
+    args = parser.parse_args()
+
+    writer = create_writer(args.bag)
+    write_images(writer, args.base_dir, args.image_topic, args.grayscale)
+    if not args.no_imu:
+        write_imu(writer, args.base_dir, args.imu_topic)
+    writer.close()
 
 
-# cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()

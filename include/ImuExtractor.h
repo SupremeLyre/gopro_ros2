@@ -4,8 +4,7 @@
 
 #pragma once
 
-#include <ros/ros.h>
-#include <rosbag/bag.h>
+#include <rosbag2_cpp/writer.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -60,8 +59,8 @@ public:
                       uint64_t image_end_stamp = 0,
                       bool offset_only = false);
 
-  void writeImuData(rosbag::Bag& bag, uint64_t end_time, const std::string& imu_topic);
-  void writeGpsData(rosbag::Bag& bag, uint64_t end_time, const std::string& gps_topic);
+  void writeImuData(rosbag2_cpp::Writer& bag, uint64_t end_time, const std::string& imu_topic);
+  void writeGpsData(rosbag2_cpp::Writer& bag, uint64_t end_time, const std::string& gps_topic);
   void readImuData(std::deque<AcclMeasurement>& accl_data,
                    std::deque<GyroMeasurement>& gyro_data,
                    uint64_t accl_end_time = 0,

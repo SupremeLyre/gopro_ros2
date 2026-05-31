@@ -62,8 +62,9 @@ mkdir -p ~/gopro_ws/src
 cd gopro_ws/src
 git clone https://github.com/joshi-bharat/gopro_ros.git
 cd ~/gopro_ws/
-catkin_make
-source ~/gopro_ws/devel/setup.bash
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select gopro_ros
+source ~/gopro_ws/install/setup.bash
 # add this to ~/.bashrc to make this permanent 
 ```
 
@@ -76,13 +77,15 @@ GoPro splits video into smaller chunks. By splitting up the video it reduces the
 To save GoPro video with IMU measurements to rosbag:
 
 ```bash
-roslaunch gopro_ros gopro_to_rosbag.launch gopro_video:=<gopro_video_file> rosbag:=<bag_file>
+ros2 launch gopro_ros gopro_to_rosbag.launch.py gopro_video:=<gopro_video_file> rosbag:=<bag_dir>
 ```
+
+Images are saved as `sensor_msgs/msg/CompressedImage` on `/gopro/image_raw/compressed` by default. Pass `compressed_image_format:=false` if you need raw `sensor_msgs/msg/Image` output.
 
 If you have multiple files from a single session, put all videos in same folder you can use the following command to concatenate into a single rosbag:
 
 ```bash
-roslaunch gopro_ros gopro_to_rosbag.launch gopro_folder:=<folder_with_gopro_video_files> multiple_files:=true rosbag:=<bag_file>
+ros2 launch gopro_ros gopro_to_rosbag.launch.py gopro_folder:=<folder_with_gopro_video_files> multiple_files:=true rosbag:=<bag_dir>
 ```
 
 ## Save in Euroc format
@@ -90,13 +93,13 @@ roslaunch gopro_ros gopro_to_rosbag.launch gopro_folder:=<folder_with_gopro_vide
 To save GoPro video with IMU measurements in Euroc format:
 
 ```bash
-roslaunch gopro_ros gopro_to_rosbag.launch gopro_video:=<gopro_video_file> asl_dir:=<asl_format_dir>
+ros2 launch gopro_ros gopro_to_asl.launch.py gopro_video:=<gopro_video_file> asl_dir:=<asl_format_dir>
 ```
 
 If you have multiple files from a single session, put all videos in same folder you can use the following command extract all videos in a single folder:
 
 ```bash
-roslaunch gopro_ros gopro_to_rosbag.launch gopro_folder:=<folder_with_gopro_video_files> multiple_files:=true asl_dir:=<asl_format_dir>
+ros2 launch gopro_ros gopro_to_asl.launch.py gopro_folder:=<folder_with_gopro_video_files> multiple_files:=true asl_dir:=<asl_format_dir>
 ```
 # TODO:
 Extraction video takes a lot of time. Implement multi-threaded.

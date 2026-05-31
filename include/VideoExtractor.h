@@ -13,7 +13,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#include <rosbag/bag.h>
+#include <rosbag2_cpp/writer.hpp>
 
 #include <cstdio>
 #include <opencv2/opencv.hpp>
@@ -28,7 +28,7 @@ private:
   AVFormatContext* pFormatContext = NULL;
   uint32_t videoStreamIndex;
   AVCodecContext* pCodecContext = NULL;
-  AVCodec* pCodec = NULL;
+  const AVCodec* pCodec = NULL;
   AVFrame* pFrame = NULL;
   AVFrame* pFrameRGB = NULL;
   AVPacket packet;
@@ -68,14 +68,14 @@ public:
   void writeVideo(const std::string& bag_file,
                   uint64_t last_image_stamp_ns,
                   const std::string& image_topic);
-  void writeVideo(rosbag::Bag& bag,
+  void writeVideo(rosbag2_cpp::Writer& bag,
                   uint64_t last_image_stamp_ns,
                   const std::string& image_topic,
                   bool grayscale = false,
                   bool compress_image = false,
                   bool display_images = false);
 
-  void writeVideo(rosbag::Bag& bag,
+  void writeVideo(rosbag2_cpp::Writer& bag,
                   const std::string& image_topic,
                   const std::vector<uint64_t> image_stamps,
                   bool grayscale,

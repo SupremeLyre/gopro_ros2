@@ -21,16 +21,13 @@
 
 #include "ImuExtractor.h"
 
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/NavSatFix.h>
-#include <sensor_msgs/NavSatStatus.h>
-#include <std_msgs/Header.h>
-
 #include <cstdlib>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+
+#include "ros2_compat.h"
+#include "time_utils.h"
 
 extern void PrintGPMF(GPMF_stream* ms);
 
@@ -481,7 +478,7 @@ void GoProImuExtractor::getPayloadStamps(uint32_t fourcc,
 
 void GoProImuExtractor::skipPayloads(uint32_t num_payloads) { payloads_skipped = num_payloads; }
 
-void GoProImuExtractor::writeImuData(rosbag::Bag& bag,
+void GoProImuExtractor::writeImuData(rosbag2_cpp::Writer& bag,
                                      uint64_t end_time,
                                      const std::string& imu_topic) {
   uint64_t first_frame_us, first_frame_ns;
@@ -554,14 +551,12 @@ void GoProImuExtractor::writeImuData(rosbag::Bag& bag,
         uint64_t s = prev_stamp + i * step_size;
         uint64_t current_stamp = movie_creation_time + s - first_frame_ns;
 
-        uint32_t secs = current_stamp * 1e-9;
-        uint32_t n_secs = current_stamp % 1000000000;
-        ros::Time ros_time(secs, n_secs);
+        auto ros_time = rclTimeFromNanoseconds(current_stamp);
 
         std_msgs::Header header;
-        header.stamp = ros_time;
+        header.stamp = stampFromNanoseconds(current_stamp);
         header.frame_id = "gopro";
-        header.seq = seq++;
+        seq++;
 
         vector<double> gyro_sample = gyro_data.at(i);
         vector<double> accl_sample = accl_data.at(i);
@@ -576,7 +571,7 @@ void GoProImuExtractor::writeImuData(rosbag::Bag& bag,
         imu_msg.linear_acceleration.y = accl_sample.at(2);
         imu_msg.linear_acceleration.z = accl_sample.at(0);
 
-        bag.write(imu_topic, ros_time, imu_msg);  // Write to bag
+        bag.write(imu_msg, imu_topic, ros_time);  // Write to bag
 
         // Letting one extra imu stamp
         if ((current_stamp - movie_creation_time) > end_time) break;
@@ -823,7 +818,7 @@ void GoProImuExtractor::readMagnetometerData(std::deque<MagMeasurement>& mag_que
   }
 }
 
-void GoProImuExtractor::writeGpsData(rosbag::Bag& bag,
+void GoProImuExtractor::writeGpsData(rosbag2_cpp::Writer& bag,
                                      uint64_t end_time,
                                      const std::string& gps_topic) {
   uint64_t first_frame_us, first_frame_ns;
@@ -872,14 +867,12 @@ void GoProImuExtractor::writeGpsData(rosbag::Bag& bag,
         uint64_t s = prev_stamp + i * step_size;
         uint64_t current_ros_stamp = movie_creation_time + s - first_frame_ns;
 
-        uint32_t secs = current_ros_stamp * 1e-9;
-        uint32_t n_secs = current_ros_stamp % 1000000000;
-        ros::Time ros_time(secs, n_secs);
+        auto ros_time = rclTimeFromNanoseconds(current_ros_stamp);
 
         std_msgs::Header header;
-        header.stamp = ros_time;
+        header.stamp = stampFromNanoseconds(current_ros_stamp);
         header.frame_id = "gopro";
-        header.seq = seq++;
+        seq++;
 
         vector<double> gps_sample = gps_data.at(i);
         // GPS9 format:
@@ -905,7 +898,7 @@ void GoProImuExtractor::writeGpsData(rosbag::Bag& bag,
         
         gps_msg.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
 
-        bag.write(gps_topic, ros_time, gps_msg);  // Write to bag
+        bag.write(gps_msg, gps_topic, ros_time);  // Write to bag
 
         if ((current_ros_stamp - movie_creation_time) > end_time) break;
       }

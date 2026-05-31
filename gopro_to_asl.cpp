@@ -2,47 +2,55 @@
 // Created by bjoshi on 10/29/20.
 //
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 
-#include <experimental/filesystem>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 
 #include "ImuExtractor.h"
 #include "VideoExtractor.h"
 #include "color_codes.h"
+#include "ros2_compat.h"
 
 using namespace std;
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
-  ros::init(argc, argv, "gopro_to_asl");
-  ros::NodeHandle nh_private("~");
+  rclcpp::init(argc, argv);
+  auto node = rclcpp::Node::make_shared("gopro_to_asl");
 
   string gopro_video;
   string asl_dir;
   string gopro_folder;
 
-  bool is_gopro_video = nh_private.getParam("gopro_video", gopro_video);
-  bool is_gopro_folder = nh_private.getParam("gopro_folder", gopro_folder);
+  gopro_video = node->declare_parameter<std::string>("gopro_video", "");
+  gopro_folder = node->declare_parameter<std::string>("gopro_folder", "");
+  asl_dir = node->declare_parameter<std::string>("asl_dir", "");
+
+  bool is_gopro_video = !gopro_video.empty();
+  bool is_gopro_folder = !gopro_folder.empty();
 
   if (!is_gopro_video && !is_gopro_folder) {
     ROS_FATAL("Please specify the gopro video or folder");
-    ros::shutdown();
+    rclcpp::shutdown();
+    return 1;
   }
 
-  ROS_FATAL_STREAM_COND(!nh_private.getParam("asl_dir", asl_dir), "No asl directory specified");
+  if (asl_dir.empty()) {
+    ROS_FATAL_STREAM("No asl directory specified");
+    rclcpp::shutdown();
+    return 1;
+  }
 
-  double scaling = 1.0;
-  if (nh_private.hasParam("scale")) nh_private.getParam("scale", scaling);
+  double scaling = node->declare_parameter<double>("scale", 1.0);
 
-  bool grayscale = false;
-  if (nh_private.hasParam("grayscale")) nh_private.getParam("grayscale", grayscale);
+  bool grayscale = node->declare_parameter<bool>("grayscale", false);
 
-  bool display_images = false;
-  if (nh_private.hasParam("display_images")) nh_private.getParam("display_images", display_images);
+  bool display_images = node->declare_parameter<bool>("display_images", false);
 
-  bool multiple_files = false;
-  if (nh_private.hasParam("multiple_files")) nh_private.getParam("multiple_files", multiple_files);
+  bool multiple_files = node->declare_parameter<bool>("multiple_files", false);
 
   vector<fs::path> video_files;
 
@@ -65,13 +73,13 @@ int main(int argc, char* argv[]) {
   // print image folder
   cout << "Image folder: " << image_folder << endl;
 
-  if (!experimental::filesystem::is_directory(image_folder)) {
-    experimental::filesystem::create_directories(image_folder);
+  if (!std::filesystem::is_directory(image_folder)) {
+    std::filesystem::create_directories(image_folder);
   }
 
   std::string image_data_folder = image_folder + "/data";
-  if (!std::experimental::filesystem::is_directory(image_data_folder)) {
-    std::experimental::filesystem::create_directories(image_data_folder);
+  if (!std::filesystem::is_directory(image_data_folder)) {
+    std::filesystem::create_directories(image_data_folder);
   }
 
   std::string image_file = image_folder + "/data.csv";
@@ -82,8 +90,8 @@ int main(int argc, char* argv[]) {
   image_stream.close();
 
   string imu_folder = asl_dir + "/mav0/imu0";
-  if (!experimental::filesystem::is_directory(imu_folder)) {
-    experimental::filesystem::create_directories(imu_folder);
+  if (!std::filesystem::is_directory(imu_folder)) {
+    std::filesystem::create_directories(imu_folder);
   }
 
   string imu_file = imu_folder + "/data.csv";
@@ -135,7 +143,8 @@ int main(int argc, char* argv[]) {
     uint32_t ffmpeg_frame_count = video_extractor.getFrameCount();
     if (gpmf_frame_count != ffmpeg_frame_count) {
       ROS_FATAL_STREAM("Video and metadata frame count do not match");
-      ros::shutdown();
+      rclcpp::shutdown();
+      return 1;
     }
 
     uint64_t gpmf_video_time = imu_extractor.getVideoCreationTime();
@@ -143,14 +152,16 @@ int main(int argc, char* argv[]) {
 
     if (ffmpeg_video_time != gpmf_video_time) {
       ROS_FATAL_STREAM("Video creation time does not match");
-      ros::shutdown();
+      rclcpp::shutdown();
+      return 1;
     }
 
     imu_extractor.getImageStamps(image_stamps, video_end_stamp);
     if (i != video_files.size() - 1 && image_stamps.size() != ffmpeg_frame_count) {
       ROS_FATAL_STREAM("ffmpeg and gpmf frame count does not match.");
       ROS_FATAL_STREAM(image_stamps.size() << " vs " << ffmpeg_frame_count);
-      ros::shutdown();
+      rclcpp::shutdown();
+      return 1;
     }
 
     video_extractor.extractFrames(image_folder, image_stamps, grayscale, display_images);
@@ -195,5 +206,6 @@ int main(int argc, char* argv[]) {
 
   imu_stream.close();
 
+  rclcpp::shutdown();
   return 0;
 }

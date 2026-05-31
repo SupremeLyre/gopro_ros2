@@ -1,80 +1,91 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
-import rospy
-from sensor_msgs.msg import Imu
-from sensor_msgs.msg import CompressedImage, Image
 import argparse
 import os
-import numpy as np
+
 import cv2
 from cv_bridge import CvBridge
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage, Image, Imu
 
 
-class dump_stamps:
-    def __init__(self, root_folder):
+def stamp_to_ns(stamp):
+    return stamp.sec * 1000000000 + stamp.nanosec
 
+
+class AslDumper(Node):
+    def __init__(self, root_folder, image_topic, compressed_image_topic, imu_topic):
+        super().__init__("asl_format")
         self.bridge = CvBridge()
-        rospy.Subscriber('/gopro/image/compressed',
-                         CompressedImage, self.compressed_image_sub)
-        rospy.Subscriber('/gopro/imu', Imu, self.imu_sub)
-        rospy.Subscriber('/gopro/image', Image, self.image_sub)
 
-        if not os.path.exists(root_folder):
-            os.mkdir(root_folder)
-        img_folder = os.path.join(root_folder, 'cam0')
-        if not os.path.exists(img_folder):
-            os.mkdir(img_folder)
-        self.img_data_folder = os.path.join(img_folder, 'data')
-        if not os.path.exists(self.img_data_folder):
-            os.mkdir(self.img_data_folder)
-        file = os.path.join(img_folder, 'data.csv')
-        self.img_file = open(file, 'w')
-        self.img_file.write('#timestamp [ns],filename\n')
+        os.makedirs(root_folder, exist_ok=True)
 
-        imu_folder = os.path.join(root_folder, 'imu0')
-        if not os.path.exists(imu_folder):
-            os.mkdir(imu_folder)
-        file = os.path.join(imu_folder, 'data.csv')
-        self.imu_file = open(file, 'w')
-        self.imu_file.write('#timestamp [ns],w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],'
-                            'w_RS_S_z [rad s^-1],a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n')
+        img_folder = os.path.join(root_folder, "cam0")
+        self.img_data_folder = os.path.join(img_folder, "data")
+        os.makedirs(self.img_data_folder, exist_ok=True)
+        self.img_file = open(os.path.join(img_folder, "data.csv"), "w")
+        self.img_file.write("#timestamp [ns],filename\n")
 
-    def __del__(self):
+        imu_folder = os.path.join(root_folder, "imu0")
+        os.makedirs(imu_folder, exist_ok=True)
+        self.imu_file = open(os.path.join(imu_folder, "data.csv"), "w")
+        self.imu_file.write(
+            "#timestamp [ns],w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],"
+            "w_RS_S_z [rad s^-1],a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n"
+        )
+
+        self.create_subscription(CompressedImage, compressed_image_topic, self.compressed_image_sub, 10)
+        self.create_subscription(Image, image_topic, self.image_sub, 10)
+        self.create_subscription(Imu, imu_topic, self.imu_sub, 100)
+
+    def close(self):
         self.imu_file.close()
         self.img_file.close()
 
     def imu_sub(self, imu_msg):
+        stamp = stamp_to_ns(imu_msg.header.stamp)
         acc = imu_msg.linear_acceleration
         ang_vel = imu_msg.angular_velocity
-        self.imu_file.write('{},{},{},{},{},{},{}\n'.format(str(imu_msg.header.stamp), ang_vel.x, ang_vel.y, ang_vel.z,
-                                                            acc.x, acc.y, acc.z))
+        self.imu_file.write(
+            f"{stamp},{ang_vel.x},{ang_vel.y},{ang_vel.z},{acc.x},{acc.y},{acc.z}\n"
+        )
 
     def compressed_image_sub(self, img_msg):
-        np_arr = np.fromstring(img_msg.data, np.uint8)
+        stamp = stamp_to_ns(img_msg.header.stamp)
+        np_arr = np.frombuffer(img_msg.data, np.uint8)
         image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        cv2.imwrite(os.path.join(self.img_data_folder,
-                    '{}.png'.format(str(img_msg.header.stamp))), image_np)
-        self.img_file.write('{},{}\n'.format(
-            str(img_msg.header.stamp), '{}.png'.format(str(img_msg.header.stamp))))
+        self.write_image(stamp, image_np)
 
     def image_sub(self, img_msg):
-        cv_image = self.bridge.imgmsg_to_cv2(
-            img_msg, desired_encoding='passthrough')
-        cv2.imwrite(os.path.join(self.img_data_folder,
-                    '{}.png'.format(str(img_msg.header.stamp))), cv_image)
-        self.img_file.write('{},{}\n'.format(
-            str(img_msg.header.stamp), '{}.png'.format(str(img_msg.header.stamp))))
+        stamp = stamp_to_ns(img_msg.header.stamp)
+        cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
+        self.write_image(stamp, cv_image)
+
+    def write_image(self, stamp, image):
+        filename = f"{stamp}.png"
+        cv2.imwrite(os.path.join(self.img_data_folder, filename), image)
+        self.img_file.write(f"{stamp},{filename}\n")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Save memory and CPU usage")
-    parser.add_argument('--base_dir', help='file to record pose')
+def main():
+    parser = argparse.ArgumentParser(description="Convert ROS2 GoPro topics to Euroc/ASL files.")
+    parser.add_argument("--base_dir", required=True, help="Output mav0-style directory.")
+    parser.add_argument("--image_topic", default="/gopro/image_raw")
+    parser.add_argument("--compressed_image_topic", default="/gopro/image_raw/compressed")
+    parser.add_argument("--imu_topic", default="/gopro/imu")
     args = parser.parse_args()
-    root_folder = args.base_dir
 
-    rospy.init_node("asl_format")
+    rclpy.init()
+    node = AslDumper(args.base_dir, args.image_topic, args.compressed_image_topic, args.imu_topic)
+    try:
+        rclpy.spin(node)
+    finally:
+        node.close()
+        node.destroy_node()
+        rclpy.shutdown()
 
-    dump_stamps(root_folder)
 
-    while not rospy.is_shutdown():
-        rospy.spin()
+if __name__ == "__main__":
+    main()
