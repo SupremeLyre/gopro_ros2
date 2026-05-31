@@ -1,5 +1,3 @@
-// clang-format off
-
 /*! @file GPMF_utils.h
 *
 *  @brief Utilities GPMF and MP4 handling
@@ -22,33 +20,36 @@
 *
 */
 
-#pragma once
+#ifndef _GPMF_UTILS_H
+#define _GPMF_UTILS_H
+
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
-#include "GPMF_parser.h"
+#define GPMF_SAMPLE_RATE_FAST		0
+#define GPMF_SAMPLE_RATE_PRECISE	1
 
-#define GPMF_SAMPLE_RATE_FAST 0
-#define GPMF_SAMPLE_RATE_PRECISE 1
+typedef struct mp4callbacks
+{
+	size_t mp4handle;
+	uint32_t (*cbGetNumberPayloads)(size_t mp4handle);									// number of indexed GPMF payloads
+	uint32_t (*cbGetPayloadSize)(size_t mp4handle, uint32_t index);					// get payload size for a particular index
+	uint32_t *(*cbGetPayload)(size_t mp4handle, size_t res, uint32_t index);			// get payload data for a particular index
+	size_t	 (*cbGetPayloadResource)(size_t mp4handle, size_t reshandle, uint32_t initialMemorySize);	// get payload memory handler
+	void	 (*cbFreePayloadResource)(size_t mp4handle, size_t reshandle);							// free payload memory handler
+	uint32_t (*cbGetPayloadTime)(size_t mp4handle, uint32_t index, double* in, double* out); //MP4 timestamps for the payload
+	uint32_t (*cbGetEditListOffsetRationalTime)(size_t mp4handle,						// get any time offset for GPMF track
+		int32_t	 *offset_numerator, uint32_t* denominator);
+} mp4callbacks;
 
-	typedef struct mp4callbacks
-	{
-		size_t mp4handle;
-		uint32_t (*cbGetNumberPayloads)(size_t mp4handle);												// number of indexed GPMF payloads
-		uint32_t (*cbGetPayloadSize)(size_t mp4handle, uint32_t index);									// get payload size for a particular index
-		uint32_t *(*cbGetPayload)(size_t mp4handle, size_t res, uint32_t index);						// get payload data for a particular index
-		size_t (*cbGetPayloadResource)(size_t mp4handle, size_t reshandle, uint32_t initialMemorySize); // get payload memory handler
-		void (*cbFreePayloadResource)(size_t mp4handle, size_t reshandle);								// free payload memory handler
-		uint32_t (*cbGetPayloadTime)(size_t mp4handle, uint32_t index, double *in, double *out);		//MP4 timestamps for the payload
-		uint32_t (*cbGetEditListOffsetRationalTime)(size_t mp4handle,									// get any time offset for GPMF track
-													int32_t *offset_numerator, uint32_t *denominator);
-	} mp4callbacks;
-
-	double GetGPMFSampleRate(mp4callbacks cbobject, uint32_t fourcc, uint32_t timeBaseFourCC, uint32_t flags, double *in, double *out);
+double GetGPMFSampleRate(mp4callbacks cbobject, uint32_t fourcc, uint32_t timeBaseFourCC, uint32_t flags, double* in, double* out);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif
